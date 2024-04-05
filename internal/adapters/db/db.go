@@ -20,6 +20,10 @@ type Adapter struct {
 	db *gorm.DB
 }
 
+func (a *Adapter) ErrRecordNotFound() error {
+	return gorm.ErrRecordNotFound
+}
+
 func (a Adapter) Get(ctx context.Context, email string) (domain.User, error) {
 	var userEntity User
 	res := a.db.WithContext(ctx).Where("email = ?", email).First(&userEntity)
