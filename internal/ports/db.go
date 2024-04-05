@@ -9,4 +9,5 @@ import (
 type DBPort interface {
 	Get(ctx context.Context, email string) (domain.User, error)
 	Save(context.Context, *domain.User) error
+	ErrRecordNotFound() error
 }
