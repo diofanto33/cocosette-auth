@@ -5,6 +5,7 @@ import (
 
 	"github.com/diofanto33/cocosette-auth/internal/application/core/domain"
 	"github.com/diofanto33/cocosette-auth/internal/ports"
+	"github.com/pkg/errors"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -22,35 +23,42 @@ func NewApplication(db ports.DBPort, jwt ports.JWTPort) *Application {
 }
 
 func (a Application) Enroll(ctx context.Context, user *domain.User) (domain.User, error) {
-	_, err := a.db.Get(ctx, user.Email)
-	if err == nil {
-		return domain.User{}, status.Error(codes.AlreadyExists, "user already exists")
+	exists, err := a.db.Get(ctx, user.Email)
+	if err != nil {
+		switch errors.Cause(err) {
+		case a.db.ErrRecordNotFound():
+			user.Password = a.jwt.HashPassword(user.Password)
+			err := a.db.Save(ctx, user)
+			if err != nil {
+				return domain.User{}, status.Error(codes.Internal, "could not save user")
+			}
+			return *user, nil
+		default:
+			return domain.User{}, status.Error(codes.Internal, "could not get user")
+		}
 	}
 
-	user.Password = a.jwt.HashPassword(user.Password)
-	err = a.db.Save(ctx, user)
-	if err != nil {
-		return domain.User{}, err
-	}
-	return *user, nil
+	return exists, status.Error(codes.AlreadyExists, "user already exists")
 }
 
 func (a Application) SignIn(ctx context.Context, user domain.User) (string, error) {
-	u, err := a.db.Get(ctx, user.Email)
+	exists, err := a.db.Get(ctx, user.Email)
 	if err != nil {
-		if status.Code(err) == codes.NotFound {
+		switch errors.Cause(err) {
+		case a.db.ErrRecordNotFound():
 			return "", status.Error(codes.NotFound, "user not found")
+		default:
+			return "", status.Error(codes.Internal, "could not get user")
 		}
-		return "", err
 	}
 
-	if !a.jwt.CheckPasswordHash(user.Password, u.Password) {
+	if !a.jwt.CheckPasswordHash(user.Password, exists.Password) {
 		return "", status.Error(codes.InvalidArgument, "invalid password")
 	}
 
-	token, err := a.jwt.GenerateToken(ctx, &u)
+	token, err := a.jwt.GenerateToken(ctx, &exists)
 	if err != nil {
-		return "", err
+		return "", status.Error(codes.Internal, "could not generate token")
 	}
 
 	return token, nil
@@ -59,12 +67,12 @@ func (a Application) SignIn(ctx context.Context, user domain.User) (string, erro
 func (a Application) Authenticate(ctx context.Context, signedToken string) (int64, error) {
 	email, err := a.jwt.ValidateToken(ctx, signedToken)
 	if err != nil {
-		return 0, err
+		return 0, status.Error(codes.Unauthenticated, "could not validate token")
 	}
 
 	user, err := a.db.Get(ctx, email)
 	if err != nil {
-		return 0, err
+		return 0, status.Error(codes.Internal, "could not get user")
 	}
 
 	return user.ID, nil
