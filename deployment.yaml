@@ -1,0 +1,72 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: auth
+  labels:
+    service: auth
+spec:
+  selector:
+    service: auth
+  ports:
+    - name: grpc
+      port: 50051
+      protocol: TCP
+      targetPort: 50051
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: auth
+  labels:
+    service: auth
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      service: auth
+  template:
+    metadata:
+      labels:
+        service: auth
+    spec:
+      initContainers:
+      - name: postgres-check
+        image: busybox:1.28
+        command: ['sh', '-c', 'until nc -z postgres 5432; do echo waiting for PostgreSQL; sleep 10; done;']
+      containers:
+      - name: auth
+        image: auth
+        env:
+          - name: APPLICATION_PORT
+            value: "50051"
+          - name: ENV
+            value: "prod"
+          - name: DATABASE_URL
+            value: "postgres://username:password@postgres:5432/auth"
+        ports:
+          - containerPort: 50051
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  annotations:
+    kubernetes.io/ingress.class: nginx
+    nginx.ingress.kubernetes.io/backend-protocol: GRPC
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    cert-manager.io/cluster-issuer: selfsigned-issuer
+  name: auth
+spec:
+  rules:
+    - http:
+        paths:
+          - path: /Auth
+            pathType: Prefix
+            backend:
+              service:
+                name: auth
+                port:
+                  number: 50051
+  tls:
+    - hosts:
+        - ingress.local
+      secretName: auth-tls
